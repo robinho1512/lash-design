@@ -150,8 +150,10 @@ function seed() {
       about: 'Extensão de cílios feita com calma, técnica e produtos premium. Cada olhar é planejado para o formato do seu rosto.',
       weekday_open: '18:00', weekday_close: '22:00', weekend_open: '09:00', weekend_close: '18:00',
       slot_interval: 30, closed_days: [],
-      reminder_message: 'Oi {nome}! Passando para lembrar do seu {servico} no dia {data} às {hora}. Confirma pra mim?',
-      reminder_message_maintenance: 'Oi {nome}! Seu retorno de manutenção está marcado para {data} às {hora}. Podemos confirmar?',
+      /* mensagem para aplicação (extensão de cílios) */
+      reminder_message: 'Oi {nome}! Passando para lembrar do seu agendamento de extensão de cílios no dia {data} às {hora}. Confirma pra mim?',
+      /* mensagem para manutenção */
+      reminder_message_maintenance: 'Oi {nome}! Passando para lembrar da sua manutenção no dia {data} às {hora}. Confirma pra mim?',
       confirm_message: 'Oi {nome}! Seu {servico} está confirmado para {data} às {hora}. Até lá!'
     },
     services: withIds([
@@ -180,12 +182,6 @@ function seed() {
       { client_name: 'Patrícia Gomes', client_phone: '(11) 93311-2266', service_name: 'Volume Brasileiro', price: 180, date: d(-9), start_time: '10:00', duration_minutes: 120, status: 'concluido', payment_status: 'pago', payment_method: 'pix', notes: '' },
       { client_name: 'Carla Mendes', client_phone: '(11) 97733-8899', service_name: 'Volume Brasileiro', price: 180, date: d(-16), start_time: '19:00', duration_minutes: 120, status: 'concluido', payment_status: 'pago', payment_method: 'cartao', notes: '' }
     ]),
-    portfolio: withIds([
-      { title: 'Volume Brasileiro', service_name: 'Volume Brasileiro', image_url: 'https://media.base44.com/images/public/6adf581275f53ab817de65b4/617949b52_generated_image.png', description: 'Efeito leque com fios 0.05', featured: true },
-      { title: 'Fio a Fio Natural', service_name: 'Fio a Fio Clássico', image_url: 'https://media.base44.com/images/public/6adf581275f53ab817de65b4/896c24f1b_generated_image.png', description: 'Efeito leve para o dia a dia', featured: true },
-      { title: 'Lash Lifting', service_name: 'Lash Lifting', image_url: 'https://media.base44.com/images/public/6adf581275f53ab817de65b4/4c1212410_generated_image.png', description: 'Curvatura e tintura', featured: false },
-      { title: 'Híbrido Sofisticado', service_name: 'Híbrido', image_url: 'https://media.base44.com/images/public/6adf581275f53ab817de65b4/0450117b0_generated_image.png', description: 'Mistura de técnicas no mesmo olhar', featured: false }
-    ]),
     materials: withIds([
       { name: 'Cola Premium 5ml', category: 'Cola', unit: 'frasco', quantity: 3, min_quantity: 2, cost_per_unit: 120, notes: 'Validade curta: usar em até 4 semanas após abrir' },
       { name: 'Fios Volume 0.05', category: 'Fios', unit: 'caixa', quantity: 4, min_quantity: 2, cost_per_unit: 89, notes: '' },
@@ -204,10 +200,13 @@ function load() {
     if (raw) {
       const data = JSON.parse(raw);
       if (data && data.settings && data.appointments) {
-        /* migração: garante mensagem de lembrete de manutenção */
+        /* migração: garante mensagem de manutenção */
         if (data.settings.reminder_message_maintenance === undefined) {
-          data.settings.reminder_message_maintenance = data.settings.reminder_message || '';
+          data.settings.reminder_message_maintenance = 'Oi {nome}! Passando para lembrar da sua manutenção no dia {data} às {hora}. Confirma pra mim?';
         }
+        /* remove portfólio de bases antigas */
+        if (data.portfolio) delete data.portfolio;
+        if (data.ui && data.ui.view === 'portfolio') data.ui.view = 'agenda';
         return data;
       }
     }
@@ -269,10 +268,9 @@ const apptsOfClient = (c) => db.appointments.filter((a) =>
 const visitsOf = (c) => apptsOfClient(c).filter((a) => a.status === 'concluido').length;
 const spentOf = (c) => apptsOfClient(c).filter((a) => a.payment_status === 'pago').reduce((s, a) => s + Number(a.price || 0), 0);
 
-/* ---------- lembrete: aplicação x manutenção ----------
-   Edite livremente esta lista para mudar o que é considerado MANUTENÇÃO.
-   A checagem considera o nome do serviço do atendimento e a categoria
-   do serviço cadastrado (Services). */
+/* ---------- lembrete: agendamento (extensão) x manutenção ----------
+   Edite esta lista para mudar o que é considerado MANUTENÇÃO.
+   Tudo que NÃO casar aqui é tratado como agendamento de extensão de cílios. */
 const MAINTENANCE_TERMS = ['manutenção', 'manutencao', 'retorno', 'retoque'];
 
 function isMaintenanceAppt(a) {
@@ -284,7 +282,7 @@ function isMaintenanceAppt(a) {
 /* ---------- telas ---------- */
 const NAV = [
   ['agenda', 'Agenda'], ['clientes', 'Clientes'], ['servicos', 'Serviços e valores'],
-  ['financeiro', 'Financeiro'], ['portfolio', 'Portfólio'], ['estoque', 'Estoque'], ['config', 'Configurações']
+  ['financeiro', 'Financeiro'], ['estoque', 'Estoque'], ['config', 'Configurações']
 ];
 
 function viewAgenda() {
@@ -454,30 +452,6 @@ function viewFinanceiro() {
       '</div>').join('') : '<div class="card empty">Nenhum lançamento neste mês.</div>');
 }
 
-function viewPortfolio() {
-  const favs = db.portfolio.filter((p) => p.featured).length;
-  return '<div class="top"><div><h1>Portfólio</h1><div class="sub">Suas fotos de trabalhos, organizadas por procedimento.</div></div>' +
-    '<button class="btn" data-act="new-photo">+ Adicionar foto</button></div>' +
-    '<div class="stats">' +
-      '<div class="stat"><span>Fotos no portfólio</span><b>' + db.portfolio.length + '</b></div>' +
-      '<div class="stat"><span>Favoritas</span><b>' + favs + '</b></div>' +
-      '<div class="stat"><span>Procedimentos</span><b>' + new Set(db.portfolio.map((p) => p.service_name).filter(Boolean)).size + '</b></div>' +
-    '</div>' +
-    (db.portfolio.length ? '<div class="grid3">' + db.portfolio.map((p) =>
-      '<div class="card" style="padding:12px">' +
-        '<img class="thumb" src="' + esc(p.image_url) + '" alt="' + esc(p.title) + '">' +
-        '<div style="margin-top:10px"><strong style="font-size:14px">' + esc(p.title || 'Foto') + '</strong>' +
-          '<div class="tiny">' + esc(p.service_name || 'sem procedimento') + '</div>' +
-          (p.description ? '<div class="tiny" style="margin-top:4px">' + esc(p.description) + '</div>' : '') +
-        '</div>' +
-        '<div class="actions" style="justify-content:flex-start;margin-top:10px">' +
-          '<button class="btn outline small" data-act="fav-photo" data-id="' + p.id + '">' + (p.featured ? '★ Favorita' : '☆ Favoritar') + '</button>' +
-          '<button class="btn outline small" data-act="del-photo" data-id="' + p.id + '">Excluir</button>' +
-        '</div>' +
-      '</div>').join('') + '</div>'
-    : '<div class="card empty">Nenhuma foto ainda. Toque em “Adicionar foto” e cole o link da imagem.</div>');
-}
-
 function viewEstoque() {
   const low = db.materials.filter((m) => Number(m.quantity) <= Number(m.min_quantity));
   const total = db.materials.reduce((s, m) => s + Number(m.quantity) * Number(m.cost_per_unit || 0), 0);
@@ -535,14 +509,14 @@ function viewConfig() {
     '</div>' +
     '<div class="card">' +
       '<h2 style="font-size:18px;margin-bottom:6px">Mensagens no WhatsApp</h2>' +
-      '<p class="tiny" style="margin:0 0 14px">Use {nome}, {servico}, {data} e {hora} — o texto é montado com os dados do atendimento. O sistema escolhe automaticamente entre a mensagem de <b>aplicação</b> e a de <b>manutenção</b> conforme o serviço agendado.</p>' +
-      '<div class="field"><label>Lembrete — aplicação</label><textarea id="c_reminder" rows="3">' + esc(s.reminder_message) + '</textarea></div>' +
+      '<p class="tiny" style="margin:0 0 14px">Use {nome}, {servico}, {data} e {hora} — o texto é montado com os dados do atendimento. O sistema escolhe automaticamente entre a mensagem de <b>agendamento de extensão de cílios</b> e a de <b>manutenção</b> conforme o serviço agendado.</p>' +
+      '<div class="field"><label>Lembrete — agendamento de extensão de cílios</label><textarea id="c_reminder" rows="3">' + esc(s.reminder_message) + '</textarea></div>' +
       '<div class="field"><label>Lembrete — manutenção</label><textarea id="c_reminder_maint" rows="3">' + esc(s.reminder_message_maintenance || '') + '</textarea></div>' +
       '<div class="field"><label>Confirmação do agendamento</label><textarea id="c_confirm" rows="3">' + esc(s.confirm_message) + '</textarea></div>' +
     '</div>';
 }
 
-const VIEWS = { agenda: viewAgenda, clientes: viewClientes, servicos: viewServicos, financeiro: viewFinanceiro, portfolio: viewPortfolio, estoque: viewEstoque, config: viewConfig };
+const VIEWS = { agenda: viewAgenda, clientes: viewClientes, servicos: viewServicos, financeiro: viewFinanceiro, estoque: viewEstoque, config: viewConfig };
 
 /* ---------- diálogos ---------- */
 function apptModal(id, presetDay) {
@@ -650,16 +624,6 @@ function serviceModal(id) {
     modalFoot(id ? 'Salvar alterações' : 'Salvar serviço', 'save-service'));
 }
 
-function photoModal() {
-  openModal(
-    '<div class="head"><h2>Adicionar foto</h2><p class="tiny" style="margin:4px 0 0">Cole o link de uma imagem já publicada (o arquivo HTML não guarda imagens).</p></div>' +
-    '<div class="field"><label>Link da imagem</label><input id="pf_url" placeholder="https://..."></div>' +
-    '<div class="field"><label>Título</label><input id="pf_title" placeholder="Volume Brasileiro"></div>' +
-    '<div class="field"><label>Procedimento</label><select id="pf_service">' + db.services.map((s) => '<option value="' + esc(s.name) + '">' + esc(s.name) + '</option>').join('') + '</select></div>' +
-    '<div class="field"><label>Descrição</label><input id="pf_desc" placeholder="Efeito leque com fios 0.05"></div>' +
-    modalFoot('Salvar foto', 'save-photo'));
-}
-
 function materialModal(id) {
   const m = id ? db.materials.find((x) => x.id === id) : { name: '', category: '', unit: 'unidade', quantity: 0, min_quantity: 0, cost_per_unit: 0, notes: '' };
   if (!m) return;
@@ -731,13 +695,6 @@ function saveService() {
   closeModal(); save(); toast(id ? 'Serviço atualizado' : 'Serviço criado');
 }
 
-function savePhoto() {
-  const url = val('#pf_url');
-  if (!url) { toast('Cole o link da imagem'); return; }
-  db.portfolio.unshift({ id: uid(), image_url: url, title: val('#pf_title'), service_name: val('#pf_service'), description: val('#pf_desc'), featured: false });
-  closeModal(); save(); toast('Foto adicionada ao portfólio');
-}
-
 function saveMaterial() {
   const id = val('#mf_id');
   const data = { name: val('#mf_name'), category: val('#mf_cat'), unit: val('#mf_unit') || 'unidade', quantity: Number(val('#mf_qty')) || 0, min_quantity: Number(val('#mf_min')) || 0, cost_per_unit: num('#mf_cost'), notes: val('#mf_notes') };
@@ -766,7 +723,7 @@ function remind(a) {
   const tpl = isMaintenanceAppt(a)
     ? (s.reminder_message_maintenance || s.reminder_message || '')
     : (s.reminder_message || '');
-  const text = String(tpl || 'Oi {nome}! Lembrete do seu {servico} em {data} às {hora}.')
+  const text = String(tpl || 'Oi {nome}! Lembrete do seu atendimento em {data} às {hora}.')
     .replace('{nome}', a.client_name || '')
     .replace('{servico}', a.service_name || '')
     .replace('{data}', fmtLong(a.date))
@@ -824,10 +781,6 @@ document.addEventListener('click', (ev) => {
     case 'save-service': saveService(); break;
     case 'toggle-service': { const s = db.services.find((x) => x.id === id); if (s) { s.active = s.active === false; save(); } break; }
     case 'del-service': if (confirm('Excluir este serviço?')) { db.services = db.services.filter((x) => x.id !== id); save(); toast('Serviço excluído'); } break;
-    case 'new-photo': photoModal(); break;
-    case 'save-photo': savePhoto(); break;
-    case 'fav-photo': { const p = db.portfolio.find((x) => x.id === id); if (p) { p.featured = !p.featured; save(); } break; }
-    case 'del-photo': if (confirm('Remover esta foto do portfólio?')) { db.portfolio = db.portfolio.filter((x) => x.id !== id); save(); toast('Foto removida'); } break;
     case 'new-material': materialModal(null); break;
     case 'edit-material': materialModal(id); break;
     case 'save-material': saveMaterial(); break;
