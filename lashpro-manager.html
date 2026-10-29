@@ -151,6 +151,7 @@ function seed() {
       weekday_open: '18:00', weekday_close: '22:00', weekend_open: '09:00', weekend_close: '18:00',
       slot_interval: 30, closed_days: [],
       reminder_message: 'Oi {nome}! Passando para lembrar do seu {servico} no dia {data} às {hora}. Confirma pra mim?',
+      reminder_message_maintenance: 'Oi {nome}! Seu retorno de manutenção está marcado para {data} às {hora}. Podemos confirmar?',
       confirm_message: 'Oi {nome}! Seu {servico} está confirmado para {data} às {hora}. Até lá!'
     },
     services: withIds([
@@ -202,7 +203,13 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const data = JSON.parse(raw);
-      if (data && data.settings && data.appointments) return data;
+      if (data && data.settings && data.appointments) {
+        /* migração: garante mensagem de lembrete de manutenção */
+        if (data.settings.reminder_message_maintenance === undefined) {
+          data.settings.reminder_message_maintenance = data.settings.reminder_message || '';
+        }
+        return data;
+      }
     }
   } catch (e) {}
   return seed();
@@ -261,6 +268,18 @@ const apptsOfClient = (c) => db.appointments.filter((a) =>
   (digits(a.client_phone) && digits(a.client_phone) === digits(c.phone)));
 const visitsOf = (c) => apptsOfClient(c).filter((a) => a.status === 'concluido').length;
 const spentOf = (c) => apptsOfClient(c).filter((a) => a.payment_status === 'pago').reduce((s, a) => s + Number(a.price || 0), 0);
+
+/* ---------- lembrete: aplicação x manutenção ----------
+   Edite livremente esta lista para mudar o que é considerado MANUTENÇÃO.
+   A checagem considera o nome do serviço do atendimento e a categoria
+   do serviço cadastrado (Services). */
+const MAINTENANCE_TERMS = ['manutenção', 'manutencao', 'retorno', 'retoque'];
+
+function isMaintenanceAppt(a) {
+  const svc = db.services.find((s) => s.name === a.service_name);
+  const hay = String((a.service_name || '') + ' ' + ((svc && svc.category) || '')).toLowerCase();
+  return MAINTENANCE_TERMS.some((t) => hay.includes(t));
+}
 
 /* ---------- telas ---------- */
 const NAV = [
@@ -516,8 +535,9 @@ function viewConfig() {
     '</div>' +
     '<div class="card">' +
       '<h2 style="font-size:18px;margin-bottom:6px">Mensagens no WhatsApp</h2>' +
-      '<p class="tiny" style="margin:0 0 14px">Use {nome}, {servico}, {data} e {hora} — o texto é montado com os dados do atendimento.</p>' +
-      '<div class="field"><label>Lembrete antes do atendimento</label><textarea id="c_reminder" rows="3">' + esc(s.reminder_message) + '</textarea></div>' +
+      '<p class="tiny" style="margin:0 0 14px">Use {nome}, {servico}, {data} e {hora} — o texto é montado com os dados do atendimento. O sistema escolhe automaticamente entre a mensagem de <b>aplicação</b> e a de <b>manutenção</b> conforme o serviço agendado.</p>' +
+      '<div class="field"><label>Lembrete — aplicação</label><textarea id="c_reminder" rows="3">' + esc(s.reminder_message) + '</textarea></div>' +
+      '<div class="field"><label>Lembrete — manutenção</label><textarea id="c_reminder_maint" rows="3">' + esc(s.reminder_message_maintenance || '') + '</textarea></div>' +
       '<div class="field"><label>Confirmação do agendamento</label><textarea id="c_confirm" rows="3">' + esc(s.confirm_message) + '</textarea></div>' +
     '</div>';
 }
@@ -735,15 +755,22 @@ function saveConfig() {
   s.weekend_open = val('#c_we_open'); s.weekend_close = val('#c_we_close');
   s.slot_interval = Number(val('#c_slot')) || 30;
   s.closed_days = $$('#closedDays input:checked').map((i) => i.value);
-  s.reminder_message = val('#c_reminder'); s.confirm_message = val('#c_confirm');
+  s.reminder_message = val('#c_reminder');
+  s.reminder_message_maintenance = val('#c_reminder_maint');
+  s.confirm_message = val('#c_confirm');
   save(); toast('Configurações salvas');
 }
 
 function remind(a) {
   const s = db.settings;
-  const text = String(s.reminder_message || 'Oi {nome}! Lembrete do seu {servico} em {data} às {hora}.')
-    .replace('{nome}', a.client_name || '').replace('{servico}', a.service_name || '')
-    .replace('{data}', fmtLong(a.date)).replace('{hora}', a.start_time || '');
+  const tpl = isMaintenanceAppt(a)
+    ? (s.reminder_message_maintenance || s.reminder_message || '')
+    : (s.reminder_message || '');
+  const text = String(tpl || 'Oi {nome}! Lembrete do seu {servico} em {data} às {hora}.')
+    .replace('{nome}', a.client_name || '')
+    .replace('{servico}', a.service_name || '')
+    .replace('{data}', fmtLong(a.date))
+    .replace('{hora}', a.start_time || '');
   const phone = digits(a.client_phone);
   window.open(phone ? 'https://wa.me/55' + phone + '?text=' + encodeURIComponent(text) : 'https://wa.me/?text=' + encodeURIComponent(text), '_blank');
 }
